@@ -36,7 +36,7 @@ func (m *Memory) read(addr uint16) uint64 {
 		return m.data[addr]
 	} else {
 		log.Printf("MEM: Read from %s out of bounds: 0o%o", m.name, addr)
-		return 0
+		return 0xDEADBEEF
 	}
 }
 
