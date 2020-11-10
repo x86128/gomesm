@@ -5,6 +5,8 @@ import (
 	"log"
 )
 
+type besmWord uint64
+
 type MemRegion struct {
 	start uint16
 	end   uint16
@@ -13,25 +15,25 @@ type MemRegion struct {
 type Device interface {
 	reset()
 	getName() string
-	read(addr uint16) uint64
-	write(addr uint16, value uint64)
+	read(addr uint16) besmWord
+	write(addr uint16, value besmWord)
 }
 
 type Memory struct {
 	name string
 	size uint16
-	data []uint64
+	data []besmWord
 }
 
 func (m *Memory) reset() {
-	m.data = make([]uint64, m.size)
+	m.data = make([]besmWord, m.size)
 }
 
 func (m *Memory) getName() string {
 	return m.name
 }
 
-func (m *Memory) read(addr uint16) uint64 {
+func (m *Memory) read(addr uint16) besmWord {
 	if addr < m.size {
 		return m.data[addr]
 	}
@@ -40,7 +42,7 @@ func (m *Memory) read(addr uint16) uint64 {
 	return 0xDEADBEEF
 }
 
-func (m *Memory) write(addr uint16, value uint64) {
+func (m *Memory) write(addr uint16, value besmWord) {
 	if addr < m.size {
 		m.data[addr] = value
 	} else {
@@ -49,7 +51,7 @@ func (m *Memory) write(addr uint16, value uint64) {
 }
 
 func newMemory(name string, size uint16) Memory {
-	return Memory{name, size, make([]uint64, size)}
+	return Memory{name, size, make([]besmWord, size)}
 }
 
 type Bus struct {
@@ -79,7 +81,7 @@ func (bus *Bus) attach(memRegion MemRegion, dev Device) {
 	bus.devices = append(bus.devices, dev)
 }
 
-func (bus *Bus) read(addr uint16) uint64 {
+func (bus *Bus) read(addr uint16) besmWord {
 	for i, mmap := range bus.mmaps {
 		if mmap.start <= addr && addr <= mmap.end {
 			return bus.devices[i].read(addr - mmap.start)
@@ -89,7 +91,7 @@ func (bus *Bus) read(addr uint16) uint64 {
 	return 0xDEADBEEF
 }
 
-func (bus *Bus) write(addr uint16, value uint64) {
+func (bus *Bus) write(addr uint16, value besmWord) {
 	for i, mmap := range bus.mmaps {
 		if mmap.start <= addr && addr <= mmap.end {
 			bus.devices[i].write(addr-mmap.start, value)
@@ -99,14 +101,15 @@ func (bus *Bus) write(addr uint16, value uint64) {
 	log.Printf("BUS: %s write out of device address space,  0o%o", bus.name, addr)
 }
 
-type besmWord uint64
-
 type Cpu struct {
-	PC   uint16
-	ACC  besmWord
-	M    [16]uint16
-	ibus *Bus
-	dbus *Bus
+	PC      uint16
+	ACC     besmWord
+	M       [16]uint16
+	ibus    *Bus
+	dbus    *Bus
+	right   bool
+	irCache besmWord
+	ir      besmWord
 }
 
 func (cpu *Cpu) reset() {
@@ -116,11 +119,20 @@ func (cpu *Cpu) reset() {
 }
 
 func (cpu *Cpu) step() {
-	cpu.PC++
+	cpu.ir = cpu.irCache & 0o77777777
+	pcNext := cpu.PC
+	if !cpu.right {
+		cpu.irCache = cpu.ibus.read(cpu.PC)
+		cpu.ir = cpu.irCache >> 24
+	} else {
+		pcNext = (cpu.PC + 1) & 0o77777
+	}
+	cpu.right = !cpu.right
+	cpu.PC = pcNext
 }
 
 func (cpu *Cpu) state() {
-	fmt.Printf("PC:\t%05o\n", cpu.PC)
+	fmt.Printf("PC:\t%05o right:%t IR:%016o\n", cpu.PC, cpu.right, cpu.ir)
 	fmt.Printf("M:\t%05v\n", cpu.M)
 	fmt.Printf("ACC:\t%016o\n", cpu.ACC)
 }
@@ -143,6 +155,10 @@ func main() {
 	dbus.attach(MemRegion{0, 1023}, &ram)
 
 	cpu := newCPU(ibus, dbus)
+	rom.write(1, 0o6666666677777777)
+	cpu.step()
+	cpu.state()
+	fmt.Println("===")
 	cpu.step()
 	cpu.state()
 }

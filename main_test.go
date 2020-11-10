@@ -40,3 +40,38 @@ func TestBusWithRam(t *testing.T) {
 		t.Error("Ram write than read from bus failed")
 	}
 }
+
+func TestFetch(t *testing.T) {
+	rom := newMemory("ROM", 1024)
+	ibus := newBus("IBUS")
+	ibus.attach(MemRegion{0, 2047}, &rom)
+	cpu := newCPU(ibus, ibus)
+	rom.write(1, 0o6666666677777777)
+	cpu.step()
+	if cpu.irCache != 0o6666666677777777 {
+		t.Error("Fetch to IR cache failed")
+	}
+	if cpu.ir != 0o66666666 {
+		t.Error("IR load error")
+	}
+
+	cpu.step()
+	if cpu.ir != 0o77777777 {
+		t.Error("IR load from cache error")
+	}
+}
+
+func TestPCIncrement(t *testing.T) {
+	rom := newMemory("ROM", 16)
+	ibus := newBus("IBUS")
+	ibus.attach(MemRegion{0, 15}, &rom)
+	cpu := newCPU(ibus, ibus)
+	cpu.step()
+	if cpu.PC != 1 {
+		t.Error("PC incremented when executing left command")
+	}
+	cpu.step()
+	if cpu.PC != 2 {
+		t.Error("PC not incremented after executing right command")
+	}
+}
