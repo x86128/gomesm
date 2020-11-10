@@ -34,10 +34,10 @@ func (m *Memory) getName() string {
 func (m *Memory) read(addr uint16) uint64 {
 	if addr < m.size {
 		return m.data[addr]
-	} else {
-		log.Printf("MEM: Read from %s out of bounds: 0o%o", m.name, addr)
-		return 0xDEADBEEF
 	}
+
+	log.Printf("MEM: Read from %s out of bounds: 0o%o", m.name, addr)
+	return 0xDEADBEEF
 }
 
 func (m *Memory) write(addr uint16, value uint64) {
