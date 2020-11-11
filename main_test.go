@@ -1,7 +1,14 @@
 package main
 
-import "testing"
+import (
+	"io/ioutil"
+	"log"
+	"testing"
+)
 
+func init() {
+	log.SetOutput(ioutil.Discard)
+}
 func TestRam(t *testing.T) {
 	ram := newMemory("RAM", 1024)
 
@@ -41,7 +48,7 @@ func TestBusWithRam(t *testing.T) {
 	}
 }
 
-func TestFetch(t *testing.T) {
+func TestStep(t *testing.T) {
 	rom := newMemory("ROM", 1024)
 	ibus := newBus("IBUS")
 	ibus.attach(MemRegion{0, 2047}, &rom)
@@ -73,5 +80,42 @@ func TestPCIncrement(t *testing.T) {
 	cpu.step()
 	if cpu.PC != 2 {
 		t.Error("PC not incremented after executing right command")
+	}
+}
+
+func TestCPUReset(t *testing.T) {
+	ibus := newBus("IBUS")
+	cpu := newCPU(ibus, ibus)
+	cpu.reset()
+	if cpu.PC != 1 {
+		t.Error("PC is not equal to 1")
+	}
+	if cpu.right != false {
+		t.Error("Execution need to start from left instruction")
+	}
+}
+
+func TestEmitOp(t *testing.T) {
+	w, e := emitOp(15, OpATX, 0o20000)
+	if e == nil {
+		t.Error("Short address op emited with out of range address")
+	}
+
+	// check reg and adress field
+	w, e = emitOp(15, OpATX, 0o10)
+	if e == nil && w != 0o74000010 {
+		t.Errorf("ATX 10(17) emit error. W: %08o", w)
+	}
+
+	// check adress >= 0o70000 for short address cmd
+	w, e = emitOp(6, OpXTA, 0o71234)
+	if e == nil && w != 0o31101234 {
+		t.Errorf("XTA 71234(6) emit error. W: %08o %024b", w, w)
+	}
+
+	// check long adress command
+	w, e = emitOp(8, OpSTOP, 0o54321)
+	if e == nil && w != 0o43354321 {
+		t.Errorf("STOP 54321(10) emit error. W: %08o %024b", w, w)
 	}
 }
