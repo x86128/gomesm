@@ -135,7 +135,7 @@ func TestATXXTA(t *testing.T) {
 	mem.write(1, instr<<24)
 	cpu.step()
 	if mem.read(55) != 0xC0DE {
-		t.Error("normal mode ATX is not working")
+		t.Error("Normal mode ATX is not working")
 	}
 	// stack mode
 	cpu.reset()
@@ -156,7 +156,7 @@ func TestATXXTA(t *testing.T) {
 		t.Error("Normal mode XTA not mowrking")
 	}
 	if cpu.rrReg&4 == 0 {
-		t.Error("Logial mode flag is not set")
+		t.Error("Logical mode flag is not set")
 	}
 	// test stack mode xta
 	cpu.reset()
@@ -168,6 +168,42 @@ func TestATXXTA(t *testing.T) {
 		t.Error("Stack mode XTA not mowrking")
 	}
 	if cpu.rrReg&4 == 0 {
-		t.Error("Logial mode flag is not set")
+		t.Error("Logical mode flag is not set")
+	}
+}
+
+func TestSTX(t *testing.T) {
+	mem := newMemory("MEM", 1024)
+	ibus := newBus("IBUS")
+	ibus.attach(MemRegion{0, 1023}, &mem)
+	cpu := newCPU(ibus, ibus)
+	// test STX
+	cpu.ACC = 0o6767
+	cpu.M[15] = 0o101
+	ibus.write(0o100, 0o22)
+	instr, _ := emitOp(0, OpSTX, 0o55)
+	mem.write(1, instr<<24)
+	cpu.step()
+	if cpu.ACC != 0o22 || cpu.M[15] != 0o100 || ibus.read(0o55) != 0o6767 || cpu.rrReg&4 == 0 {
+		cpu.state()
+		t.Error("STX broken")
+	}
+}
+
+func TestXTS(t *testing.T) {
+	mem := newMemory("MEM", 1024)
+	ibus := newBus("IBUS")
+	ibus.attach(MemRegion{0, 1023}, &mem)
+	cpu := newCPU(ibus, ibus)
+
+	cpu.ACC = 0o6767
+	cpu.M[15] = 0o100
+	ibus.write(0o55, 0o22)
+	instr, _ := emitOp(0, OpXTS, 0o55)
+	mem.write(1, instr<<24)
+	cpu.step()
+	if cpu.ACC != 0o22 || cpu.M[15] != 0o101 || ibus.read(0o100) != 0o6767 || cpu.rrReg&4 == 0 {
+		cpu.state()
+		t.Error("XTS broken")
 	}
 }

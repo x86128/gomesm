@@ -112,11 +112,13 @@ func emitOp(ind uint16, op uint16, addr uint16) (word besmWord, err error) {
 	return word, nil
 }
 
+// MemRegion of device attached to bus
 type MemRegion struct {
 	start uint16
 	end   uint16
 }
 
+// Device interface
 type Device interface {
 	reset()
 	getName() string
@@ -124,6 +126,7 @@ type Device interface {
 	write(addr uint16, value besmWord)
 }
 
+// Memory holds read/write data
 type Memory struct {
 	name string
 	size uint16
@@ -159,6 +162,7 @@ func newMemory(name string, size uint16) Memory {
 	return Memory{name, size, make([]besmWord, size)}
 }
 
+// Bus is used by CPU to read/write mmaped devices
 type Bus struct {
 	name    string
 	mmaps   []MemRegion
@@ -250,11 +254,67 @@ func (cpu *CPU) setRAdd() {
 	cpu.rrReg = cpu.rrReg&0b11100011 | 0b0010000
 }
 
+func (cpu *CPU) uAddr() uint16 {
+	return (cpu.M[cpu.irIND] + cpu.vAddr) & 0o77777
+}
+
 func (cpu *CPU) atx() {
 	cpu.dbus.write(cpu.uAddr(), cpu.ACC)
 	if cpu.stack {
 		cpu.M[15] = (cpu.M[15] + 1) & 0o77777
 	}
+}
+
+func (cpu *CPU) stx() {
+	cpu.dbus.write(cpu.uAddr(), cpu.ACC)
+	cpu.M[15] = (cpu.M[15] - 1) & 0o77777
+	cpu.ACC = cpu.dbus.read(cpu.M[15])
+	cpu.setRLog()
+}
+
+func (cpu *CPU) xts() {
+	cpu.dbus.write(cpu.M[15], cpu.ACC)
+	cpu.M[15] = (cpu.M[15] + 1) & 0o77777
+	cpu.ACC = cpu.dbus.read(cpu.uAddr())
+	cpu.setRLog()
+}
+
+func (cpu *CPU) aax() {
+	if cpu.stack {
+		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
+	}
+	cpu.ACC = cpu.ACC & cpu.dbus.read(cpu.uAddr())
+	cpu.setRLog()
+}
+
+func (cpu *CPU) aex() {
+	if cpu.stack {
+		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
+	}
+	cpu.ACC = cpu.ACC ^ cpu.dbus.read(cpu.uAddr())
+	cpu.setRLog()
+}
+
+func (cpu *CPU) aox() {
+	if cpu.stack {
+		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
+	}
+	cpu.ACC = cpu.ACC | cpu.dbus.read(cpu.uAddr())
+	cpu.setRLog()
+}
+
+func (cpu *CPU) xtr() {
+	if cpu.stack {
+		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
+	}
+	// TODO: in real MESM6 r[5:0] = dbus[46:41]
+	// TODO: bin r[6] is "in interrupt" flag - ignoring
+	cpu.rrReg = cpu.rrReg&0b1000000 | uint16(cpu.dbus.read(cpu.uAddr())&0o77)
+}
+
+func (cpu *CPU) rte() {
+	// TODO: in real MESM6 ACC[47:42] = r[5:0] (exponent = r)
+	cpu.ACC = besmWord(cpu.rrReg) & 0o77
 }
 
 func (cpu *CPU) xta() {
@@ -263,10 +323,6 @@ func (cpu *CPU) xta() {
 	}
 	cpu.ACC = cpu.dbus.read(cpu.uAddr())
 	cpu.setRLog()
-}
-
-func (cpu *CPU) uAddr() uint16 {
-	return (cpu.M[cpu.irIND] + cpu.vAddr) & 0o77777
 }
 
 func (cpu *CPU) step() {
@@ -318,6 +374,10 @@ func (cpu *CPU) step() {
 		cpu.atx()
 	case OpXTA:
 		cpu.xta()
+	case OpSTX:
+		cpu.stx()
+	case OpXTS:
+		cpu.xts()
 	default:
 		log.Printf("Unimplemented opcode: %03o", cpu.irOP)
 		cpu.isRunning = false
@@ -330,6 +390,7 @@ func (cpu *CPU) state() {
 	fmt.Printf("PC:\t%05o right: %t IR: %08o\n", cpu.PC, cpu.right, cpu.ir)
 	fmt.Printf("M:\t%05o\n", cpu.M)
 	fmt.Printf("ACC:\t%016o\n", cpu.ACC)
+	fmt.Printf("RR: %07b\n", cpu.rrReg)
 }
 
 func (cpu *CPU) run() {
