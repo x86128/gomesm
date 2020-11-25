@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 )
 
 // Short address opcodes (BIT20 = 0)
@@ -191,6 +195,9 @@ func (bus *Bus) attach(memRegion MemRegion, dev Device) {
 }
 
 func (bus *Bus) read(addr uint16) besmWord {
+	if addr == 0 {
+		return 0
+	}
 	for i, mmap := range bus.mmaps {
 		if mmap.start <= addr && addr <= mmap.end {
 			return bus.devices[i].read(addr - mmap.start)
@@ -212,18 +219,19 @@ func (bus *Bus) write(addr uint16, value besmWord) {
 
 // CPU state
 type CPU struct {
-	PC        uint16     // instruction pointer
-	ACC       besmWord   // accumulator
-	M         [16]uint16 // M registers (index registers, address modifiers)
-	ibus      *Bus       // instruction bus
-	dbus      *Bus       // data bus
-	right     bool       // right or left instruction flag
-	irCache   besmWord   // instruction cache register
-	ir        besmWord   // current being executed instruction
-	stack     bool       // current instruction in stack mode
-	isRunning bool
+	PC      uint16     // instruction pointer
+	pcNext  uint16     // next PC after current instruction execution
+	Acc     besmWord   // accumulator
+	M       [16]uint16 // M registers (index registers, address modifiers)
+	ibus    *Bus       // instruction bus
+	dbus    *Bus       // data bus
+	right   bool       // right or left instruction flag
+	irCache besmWord   // instruction cache register
+	ir      besmWord   // current being executed instruction
+	stack   bool       // current instruction in stack mode
+	Running bool
 
-	irOP   uint16
+	irOp   uint16
 	irIND  uint16
 	irAddr uint16
 
@@ -236,10 +244,10 @@ type CPU struct {
 
 func (cpu *CPU) reset() {
 	cpu.PC = 1
-	cpu.ACC = 0
+	cpu.Acc = 0
 	cpu.M = [16]uint16{0}
 	cpu.right = false
-	cpu.isRunning = false
+	cpu.Running = false
 }
 
 func (cpu *CPU) setRLog() {
@@ -259,23 +267,23 @@ func (cpu *CPU) uAddr() uint16 {
 }
 
 func (cpu *CPU) atx() {
-	cpu.dbus.write(cpu.uAddr(), cpu.ACC)
+	cpu.dbus.write(cpu.uAddr(), cpu.Acc)
 	if cpu.stack {
 		cpu.M[15] = (cpu.M[15] + 1) & 0o77777
 	}
 }
 
 func (cpu *CPU) stx() {
-	cpu.dbus.write(cpu.uAddr(), cpu.ACC)
+	cpu.dbus.write(cpu.uAddr(), cpu.Acc)
 	cpu.M[15] = (cpu.M[15] - 1) & 0o77777
-	cpu.ACC = cpu.dbus.read(cpu.M[15])
+	cpu.Acc = cpu.dbus.read(cpu.M[15])
 	cpu.setRLog()
 }
 
 func (cpu *CPU) xts() {
-	cpu.dbus.write(cpu.M[15], cpu.ACC)
+	cpu.dbus.write(cpu.M[15], cpu.Acc)
 	cpu.M[15] = (cpu.M[15] + 1) & 0o77777
-	cpu.ACC = cpu.dbus.read(cpu.uAddr())
+	cpu.Acc = cpu.dbus.read(cpu.uAddr())
 	cpu.setRLog()
 }
 
@@ -283,7 +291,7 @@ func (cpu *CPU) aax() {
 	if cpu.stack {
 		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
 	}
-	cpu.ACC = cpu.ACC & cpu.dbus.read(cpu.uAddr())
+	cpu.Acc = cpu.Acc & cpu.dbus.read(cpu.uAddr())
 	cpu.setRLog()
 }
 
@@ -291,7 +299,7 @@ func (cpu *CPU) aex() {
 	if cpu.stack {
 		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
 	}
-	cpu.ACC = cpu.ACC ^ cpu.dbus.read(cpu.uAddr())
+	cpu.Acc = cpu.Acc ^ cpu.dbus.read(cpu.uAddr())
 	cpu.setRLog()
 }
 
@@ -299,7 +307,7 @@ func (cpu *CPU) aox() {
 	if cpu.stack {
 		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
 	}
-	cpu.ACC = cpu.ACC | cpu.dbus.read(cpu.uAddr())
+	cpu.Acc = cpu.Acc | cpu.dbus.read(cpu.uAddr())
 	cpu.setRLog()
 }
 
@@ -313,41 +321,76 @@ func (cpu *CPU) xtr() {
 }
 
 func (cpu *CPU) rte() {
-	// TODO: in real MESM6 ACC[47:42] = r[5:0] (exponent = r)
-	cpu.ACC = besmWord(cpu.rrReg) & 0o77
+	// TODO: in real MESM6 Acc[47:42] = r[5:0] (exponent = r)
+	cpu.Acc = besmWord(cpu.rrReg) & 0o77
 }
 
 func (cpu *CPU) xta() {
 	if cpu.stack {
 		cpu.M[15] = (cpu.M[15] - 1) & 0o77777
 	}
-	cpu.ACC = cpu.dbus.read(cpu.uAddr())
+	cpu.Acc = cpu.dbus.read(cpu.uAddr())
 	cpu.setRLog()
+}
+
+func (cpu *CPU) accIsZero() bool {
+	if (cpu.rrReg&0b10000) != 0 && ((cpu.Acc>>40)&0x1) == 0 {
+		// additive group: non-negative
+		return true
+	}
+	if (cpu.rrReg&0b11000) == 0b01000 && ((cpu.Acc>>47)&0x1) != 0 {
+		return true
+	}
+	if (cpu.rrReg&0b11100) == 0b0100 && cpu.Acc == 0 {
+		return true
+	}
+	return false
+}
+
+func (cpu *CPU) uia() {
+	if !cpu.accIsZero() {
+		cpu.pcNext = cpu.uAddr()
+	}
+}
+
+func (cpu *CPU) uza() {
+	if cpu.accIsZero() {
+		cpu.pcNext = cpu.uAddr()
+	}
+}
+
+func (cpu *CPU) stop() {
+	// check for magic stop
+	// stop 12345(6) - success
+	if cpu.irIND == 6 && cpu.irAddr == 0o12345 {
+		log.Println("SUCCESS STOP")
+	}
+	cpu.Running = false
 }
 
 func (cpu *CPU) step() {
 	// FETCH instruction from cache or
 	cpu.ir = cpu.irCache & 0o77777777
-	pcNext := cpu.PC
+	cpu.pcNext = cpu.PC
 	// if last step was executed right instruction
 	if !cpu.right {
 		// fetch new instruction from insruction bus
 		cpu.irCache = cpu.ibus.read(cpu.PC)
 		cpu.ir = cpu.irCache >> 24
 	} else {
-		pcNext = (cpu.PC + 1) & 0o77777
+		cpu.pcNext = (cpu.PC + 1) & 0o77777
 	}
 	cpu.right = !cpu.right
 	// DECODE step 1. unpack instruction
 	cpu.irIND = uint16((cpu.ir >> 20) & 0xF)
 	if cpu.ir&0o2000000 == 0 {
-		cpu.irOP = uint16((cpu.ir & 0o770000) >> 12)
+		cpu.irOp = uint16((cpu.ir & 0o770000) >> 12)
 		cpu.irAddr = uint16(cpu.ir & 0o7777)
 		if cpu.ir&0o2000000 != 0 {
 			cpu.irAddr |= 0o70000
 		}
 	} else {
-		cpu.irOP = uint16((cpu.ir&0o1700000)>>12 + 0o200)
+		cpu.irOp = uint16((cpu.ir&0o1700000)>>12 + 0o200)
 		cpu.irAddr = uint16(cpu.ir & 0o77777)
 	}
 	// DECODE step 2. modify execution address if needed
@@ -363,13 +406,13 @@ func (cpu *CPU) step() {
 		if cpu.vAddr == 0 {
 			cpu.stack = true
 		} else {
-			if cpu.irOP == OpSTI && cpu.uAddr() == 15 {
+			if cpu.irOp == OpSTI && cpu.uAddr() == 15 {
 				cpu.stack = true
 			}
 		}
 	}
 	// EXECUTE
-	switch cpu.irOP {
+	switch cpu.irOp {
 	case OpATX:
 		cpu.atx()
 	case OpXTA:
@@ -378,25 +421,43 @@ func (cpu *CPU) step() {
 		cpu.stx()
 	case OpXTS:
 		cpu.xts()
+	case OpAAX:
+		cpu.aax()
+	case OpAEX:
+		cpu.aex()
+	case OpAOX:
+		cpu.aox()
+	case OpUIA:
+		cpu.uia()
+	case OpUZA:
+		cpu.uza()
+	case OpSTOP:
+		cpu.stop()
 	default:
-		log.Printf("Unimplemented opcode: %03o", cpu.irOP)
-		cpu.isRunning = false
+		log.Printf("Unimplemented opcode: %03o", cpu.irOp)
+		cpu.Running = false
 	}
 	// advance instrunction pointer
-	cpu.PC = pcNext
+	cpu.PC = cpu.pcNext
 }
 
 func (cpu *CPU) state() {
 	fmt.Printf("PC:\t%05o right: %t IR: %08o\n", cpu.PC, cpu.right, cpu.ir)
 	fmt.Printf("M:\t%05o\n", cpu.M)
-	fmt.Printf("ACC:\t%016o\n", cpu.ACC)
+	fmt.Printf("Acc:\t%016o\n", cpu.Acc)
 	fmt.Printf("RR: %07b\n", cpu.rrReg)
 }
 
-func (cpu *CPU) run() {
-	cpu.isRunning = true
-	for cpu.isRunning {
+func (cpu *CPU) run(printState bool) {
+	cpu.Running = true
+	if printState {
+		cpu.state()
+	}
+	for cpu.Running {
 		cpu.step()
+		if printState {
+			cpu.state()
+		}
 	}
 }
 
@@ -408,6 +469,67 @@ func newCPU(ibus *Bus, dbus *Bus) *CPU {
 	return &cpu
 }
 
+func loadOct(filename string, ibus *Bus, dbus *Bus) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatal("Cannot open file:", filename)
+	}
+	defer file.Close()
+
+	rd := bufio.NewScanner(file)
+	for rd.Scan() {
+		t := rd.Text()
+		var word, leftWord, rightWord besmWord
+		if strings.HasPrefix(t, "i") {
+			var iaddr, lind, laddr, rind, raddr uint16
+			var lopcode, ropcode string
+			n, err := fmt.Sscanf(t, "i %o %o %s %o %o %s %o", &iaddr, &lind, &lopcode, &laddr, &rind, &ropcode, &raddr)
+			if err != nil || n != 7 {
+				log.Println("Oct file parse error at:", t)
+				continue
+			}
+			if len(lopcode) == 2 {
+				opcode, _ := strconv.ParseUint(lopcode, 8, 6)
+				leftWord, _ = emitOp(lind, uint16(opcode<<3), laddr)
+			} else {
+				opcode, _ := strconv.ParseUint(lopcode, 8, 7)
+				if opcode > 0o77 {
+					laddr |= 0o70000
+					opcode &= 0o77
+				}
+				leftWord, _ = emitOp(lind, uint16(opcode), laddr)
+			}
+			word = leftWord << 24
+
+			if len(ropcode) == 2 {
+				opcode, _ := strconv.ParseUint(ropcode, 8, 6)
+				rightWord, _ = emitOp(rind, uint16(opcode<<3), raddr)
+			} else {
+				opcode, _ := strconv.ParseUint(ropcode, 8, 7)
+				if opcode > 0o77 {
+					raddr |= 0o70000
+					opcode &= 0o77
+				}
+				rightWord, _ = emitOp(rind, uint16(opcode), raddr)
+			}
+			word |= rightWord
+			ibus.write(iaddr, word)
+			// log.Printf("IBUS written at %05o data: %016o", iaddr, word)
+		}
+		if strings.HasPrefix(t, "d") {
+			var daddr, d0, d1, d2, d3 uint16
+			n, err := fmt.Sscanf(t, "d %o %o %o %o %o", &daddr, &d3, &d2, &d1, &d0)
+			if err != nil || n != 5 {
+				log.Println("Oct parse err at:", t)
+				continue
+			}
+			word = (besmWord(d3) << 36) | (besmWord(d2) << 24) | (besmWord(d1) << 12) | besmWord(d0)
+			dbus.write(daddr, word)
+			// log.Printf("DBUS written at %05o data: %016o", daddr, word)
+		}
+	}
+}
+
 func main() {
 	rom := newMemory("ROM", 1024)
 	ram := newMemory("RAM", 1024)
@@ -415,18 +537,9 @@ func main() {
 	ibus := newBus("IBUS")
 	dbus := newBus("DBUS")
 	ibus.attach(MemRegion{0, 1023}, &rom)
-	dbus.attach(MemRegion{0, 1023}, &ram)
+	dbus.attach(MemRegion{0o2000, 0o2000 + 1023}, &ram)
+	loadOct("tests/aax_aox_aex.oct", ibus, dbus)
 
 	cpu := newCPU(ibus, dbus)
-	cpu.ACC = 0o10
-	cpu.M[15] = 0o55
-	left, _ := emitOp(15, OpATX, 0)
-	right, _ := emitOp(15, OpXTA, 0)
-	ibus.write(1, left<<24+right)
-	cpu.state()
-	cpu.step()
-	cpu.ACC = 0
-	cpu.state()
-	cpu.step()
-	cpu.state()
+	cpu.run(true)
 }

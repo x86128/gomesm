@@ -129,7 +129,7 @@ func TestATXXTA(t *testing.T) {
 	ibus := newBus("IBUS")
 	ibus.attach(MemRegion{0, 1023}, &mem)
 	cpu := newCPU(ibus, ibus)
-	cpu.ACC = 0xC0DE
+	cpu.Acc = 0xC0DE
 	// normal mode
 	instr, _ := emitOp(0, OpATX, 55)
 	mem.write(1, instr<<24)
@@ -140,7 +140,7 @@ func TestATXXTA(t *testing.T) {
 	// stack mode
 	cpu.reset()
 	cpu.M[15] = 15
-	cpu.ACC = 12345
+	cpu.Acc = 12345
 	instr, _ = emitOp(15, OpATX, 0)
 	mem.write(1, instr<<24)
 	cpu.step()
@@ -152,7 +152,7 @@ func TestATXXTA(t *testing.T) {
 	instr, _ = emitOp(0, OpXTA, 55)
 	mem.write(1, instr<<24)
 	cpu.step()
-	if cpu.ACC != 0xC0DE {
+	if cpu.Acc != 0xC0DE {
 		t.Error("Normal mode XTA not mowrking")
 	}
 	if cpu.rrReg&4 == 0 {
@@ -164,7 +164,7 @@ func TestATXXTA(t *testing.T) {
 	instr, _ = emitOp(15, OpXTA, 0)
 	mem.write(1, instr<<24)
 	cpu.step()
-	if cpu.ACC != 0xC0DE {
+	if cpu.Acc != 0xC0DE {
 		t.Error("Stack mode XTA not mowrking")
 	}
 	if cpu.rrReg&4 == 0 {
@@ -178,13 +178,13 @@ func TestSTX(t *testing.T) {
 	ibus.attach(MemRegion{0, 1023}, &mem)
 	cpu := newCPU(ibus, ibus)
 	// test STX
-	cpu.ACC = 0o6767
+	cpu.Acc = 0o6767
 	cpu.M[15] = 0o101
 	ibus.write(0o100, 0o22)
 	instr, _ := emitOp(0, OpSTX, 0o55)
 	mem.write(1, instr<<24)
 	cpu.step()
-	if cpu.ACC != 0o22 || cpu.M[15] != 0o100 || ibus.read(0o55) != 0o6767 || cpu.rrReg&4 == 0 {
+	if cpu.Acc != 0o22 || cpu.M[15] != 0o100 || ibus.read(0o55) != 0o6767 || cpu.rrReg&4 == 0 {
 		cpu.state()
 		t.Error("STX broken")
 	}
@@ -196,13 +196,13 @@ func TestXTS(t *testing.T) {
 	ibus.attach(MemRegion{0, 1023}, &mem)
 	cpu := newCPU(ibus, ibus)
 
-	cpu.ACC = 0o6767
+	cpu.Acc = 0o6767
 	cpu.M[15] = 0o100
 	ibus.write(0o55, 0o22)
 	instr, _ := emitOp(0, OpXTS, 0o55)
 	mem.write(1, instr<<24)
 	cpu.step()
-	if cpu.ACC != 0o22 || cpu.M[15] != 0o101 || ibus.read(0o100) != 0o6767 || cpu.rrReg&4 == 0 {
+	if cpu.Acc != 0o22 || cpu.M[15] != 0o101 || ibus.read(0o100) != 0o6767 || cpu.rrReg&4 == 0 {
 		cpu.state()
 		t.Error("XTS broken")
 	}
