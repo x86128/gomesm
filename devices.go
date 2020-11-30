@@ -90,7 +90,7 @@ func (bus *Bus) read(addr uint16) besmWord {
 		}
 	}
 	log.Printf("BUS: %s read out of bounds: 0o%o", bus.name, addr)
-	return 0xDEADBEEF
+	return 0o7654123450517667 // garbage from unconnected bus
 }
 
 func (bus *Bus) write(addr uint16, value besmWord) {

@@ -6,10 +6,14 @@ import (
 
 // various masks
 const (
-	BIT19  = 0o1000000
-	BIT20  = 0o2000000
+	BIT19 = 0o1000000
+	BIT20 = 0o2000000
+	//         ____====____====
+	BIT48  = 0o4000000000000000
+	BIT49  = 0o10000000000000000
 	MASK12 = 0o7777
 	MASK15 = 0o77777
+	MASK48 = 0o7777777777777777
 )
 
 // Short address opcodes (BIT20 = 0)

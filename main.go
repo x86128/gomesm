@@ -8,8 +8,8 @@ func main() {
 	dbus := newBus("DBUS")
 	ibus.attach(MemRegion{0, 1023}, &rom)
 	dbus.attach(MemRegion{0o2000, 0o2000 + 1023}, &ram)
-	loadOct("tests/aax_aox_aex.oct", ibus, dbus)
+	loadOct("tests/stack.oct", ibus, dbus)
 
 	cpu := newCPU(ibus, dbus)
-	cpu.run(true)
+	cpu.run()
 }
